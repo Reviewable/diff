@@ -2,7 +2,7 @@
 <HTML>
 <HEAD>
   <TITLE>Diff Speed Test</TITLE>
-  <SCRIPT TYPE="text/javascript" LANGUAGE="JavaScript" SRC="../diff_match_patch_uncompressed.js"></SCRIPT>
+  <SCRIPT TYPE="text/javascript" LANGUAGE="JavaScript" SRC="../diff.js"></SCRIPT>
 </HEAD>
 
 <BODY>
@@ -14,7 +14,7 @@ function launch() {
   var text1 = document.getElementById('text1').value;
   var text2 = document.getElementById('text2').value;
 
-  var dmp = new diff_match_patch();
+  var dmp = new diff();
   dmp.Diff_Timeout = 0;
 
   // No warmup loop since it risks triggering an 'unresponsive script' dialog

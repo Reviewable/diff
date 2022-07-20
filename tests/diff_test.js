@@ -73,7 +73,7 @@ function diff_rebuildtexts(diffs) {
   return [text1, text2];
 }
 
-var dmp = new diff_match_patch();
+var dmp = new diff();
 
 
 // DIFF TEST FUNCTIONS
@@ -728,7 +728,7 @@ function testMatchMain() {
 
 function testPatchObj() {
   // Patch Object.
-  var p = new diff_match_patch.patch_obj();
+  var p = new diff.patch_obj();
   p.start1 = 20;
   p.start2 = 21;
   p.length1 = 18;

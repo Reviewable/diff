@@ -1,6 +1,6 @@
 <!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
 <!--
-  Test Harness for diff_match_patch.js and diff_match_patch_uncompressed.js
+  Test Harness for diff.js
 
   Copyright 2018 The diff-match-patch Authors.
   https://github.com/google/diff-match-patch
@@ -18,21 +18,18 @@
   limitations under the License.
 -->
 
+<!--
+  Modified by Piotr Kaminski.
+-->
+
 <html>
   <head>
     <script type="text/javascript">
-      // Depending on the URL argument, test the compressed or uncompressed version.
-      var compressed = (document.location.search == '?compressed');
-      if (compressed) {
-        document.write('<TITLE>Test harness for diff_match_patch.js</TITLE>');
-        document.write('<scr'+'ipt type="text/javascript" src="../diff_match_patch.js"></scr'+'ipt>');
-      } else {
-        document.write('<TITLE>Test harness for diff_match_patch_uncompressed.js</TITLE>');
-        document.write('<scr'+'ipt type="text/javascript" src="../diff_match_patch_uncompressed.js"></scr'+'ipt>');
-      }
+      document.write('<TITLE>Test harness for diff.js</TITLE>');
+      document.write('<scr'+'ipt type="text/javascript" src="../diff.js"></scr'+'ipt>');
     </script>
 
-    <script type="text/javascript" src="diff_match_patch_test.js"></script>
+    <script type="text/javascript" src="diff_test.js"></script>
 
     <script type="text/javascript">
       // Counters for unit test results.
@@ -124,13 +121,7 @@
   <body>
 
     <script type="text/javascript">
-      if (compressed) {
-        document.write('<H1>Test harness for diff_match_patch.js</H1>');
-        document.write('[ Switch to <A HREF="?uncompressed">Uncompressed</A>. ]');
-      } else {
-        document.write('<H1>Test harness for diff_match_patch_uncompressed.js</H1>');
-        document.write('[ Switch to <A HREF="?compressed">Compressed</A>. ]');
-      }
+      document.write('<H1>Test harness for diff.js</H1>');
     </script>
 
     <P>If debugging errors, start with the first reported error,
