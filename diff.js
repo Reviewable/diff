@@ -777,7 +777,7 @@ diff.prototype.diff_cleanupSemantic = function(diffs) {
       length_insertions2 = 0;
       length_deletions2 = 0;
       lastEquality = diffs[pointer][1];
-    } else {  // An insertion or deletion.
+    } else if (!/^[ \t\u00a0]+$/.test(diffs[pointer][1])) {  // A non-WS insertion or deletion.
       if (diffs[pointer][0] == DIFF_INSERT) {
         length_insertions2 += diffs[pointer][1].length;
       } else {
@@ -931,12 +931,14 @@ diff.prototype.diff_cleanupSemanticLossless = function(diffs) {
   var pointer = 1;
   // Intentionally ignore the first and last element (don't need checking).
   while (pointer < diffs.length - 1) {
-    if (diffs[pointer - 1][0] == DIFF_EQUAL &&
+    if (diffs[pointer - 1][0] == DIFF_EQUAL ||
         diffs[pointer + 1][0] == DIFF_EQUAL) {
-      // This is a single edit surrounded by equalities.
-      var equality1 = diffs[pointer - 1][1];
+      // This is a single edit that could be surrounded by equalities.
+      var equality1Actual = diffs[pointer - 1][0] === DIFF_EQUAL;
+      var equality1 = equality1Actual ? diffs[pointer - 1][1] : '';
       var edit = diffs[pointer][1];
-      var equality2 = diffs[pointer + 1][1];
+      var equality2Actual = diffs[pointer + 1][0] === DIFF_EQUAL;
+      var equality2 = equality2Actual ? diffs[pointer + 1][1] : '';
 
       // First, shift the edit as far left as possible.
       var commonOffset = this.diff_commonSuffix(equality1, edit);
@@ -953,7 +955,7 @@ diff.prototype.diff_cleanupSemanticLossless = function(diffs) {
       var bestEquality2 = equality2;
       var bestScore = diff_cleanupSemanticScore_(equality1, edit) +
           diff_cleanupSemanticScore_(edit, equality2);
-      while (edit.charAt(0) === equality2.charAt(0)) {
+      while (edit && equality2 && edit.charAt(0) === equality2.charAt(0)) {
         equality1 += edit.charAt(0);
         edit = edit.substring(1) + equality2.charAt(0);
         equality2 = equality2.substring(1);
@@ -971,15 +973,25 @@ diff.prototype.diff_cleanupSemanticLossless = function(diffs) {
       if (diffs[pointer - 1][1] != bestEquality1) {
         // We have an improvement, save it back to the diff.
         if (bestEquality1) {
-          diffs[pointer - 1][1] = bestEquality1;
-        } else {
+          if (equality1Actual) {
+            diffs[pointer - 1][1] = bestEquality1;
+          } else {
+            diffs.splice(pointer, 0, new diff.Diff(DIFF_EQUAL, bestEquality1));
+            pointer++;
+          }
+        } else if (equality1Actual) {
           diffs.splice(pointer - 1, 1);
           pointer--;
         }
         diffs[pointer][1] = bestEdit;
         if (bestEquality2) {
-          diffs[pointer + 1][1] = bestEquality2;
-        } else {
+          if (equality2Actual) {
+            diffs[pointer + 1][1] = bestEquality2;
+          } else {
+            diffs.splice(pointer + 1, 0, new diff.Diff(DIFF_EQUAL, bestEquality2));
+            pointer++;
+          }
+        } else if (equality2Actual) {
           diffs.splice(pointer + 1, 1);
           pointer--;
         }
