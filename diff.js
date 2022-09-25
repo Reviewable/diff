@@ -17,7 +17,7 @@
  */
 
 /**
- * Modified by Piotr Kaminski.
+ * Modified by Piotr Kaminski and Sergei Vorobev.
  */
 
 /**
@@ -296,6 +296,9 @@ diff.prototype.diff_lineMode_ = function(text1, text2, deadline) {
     pointer++;
   }
   diffs.pop();  // Remove the dummy entry at the end.
+
+  // Cleanup one more time after the rediff.
+  this.diff_cleanupSemantic(diffs);
 
   return diffs;
 };
