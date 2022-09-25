@@ -17,7 +17,7 @@
  */
 
 /**
- * Modified by Piotr Kaminski.
+ * Modified by Piotr Kaminski and Sergei Vorobev.
  */
 
 /**
