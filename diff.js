@@ -297,6 +297,9 @@ diff.prototype.diff_lineMode_ = function(text1, text2, deadline) {
   }
   diffs.pop();  // Remove the dummy entry at the end.
 
+  // Cleanup one more time after the rediff.
+  this.diff_cleanupSemantic(diffs);
+
   return diffs;
 };
 

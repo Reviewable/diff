@@ -305,6 +305,22 @@ function testDiffCleanupSemanticLossless() {
   diffs = [[DIFF_EQUAL, 'AAA\r\n\r\nBBB'], [DIFF_INSERT, '\r\nDDD\r\n\r\nBBB'], [DIFF_EQUAL, '\r\nEEE']];
   dmp.diff_cleanupSemanticLossless(diffs);
   assertEquivalent([[DIFF_EQUAL, 'AAA\r\n\r\n'], [DIFF_INSERT, 'BBB\r\nDDD\r\n\r\n'], [DIFF_EQUAL, 'BBB\r\nEEE']], diffs);
+  // Blank lines, next level
+  diffs = [
+    [DIFF_EQUAL, 'websites:\n'],
+    [DIFF_DELETE, 'name: ADP\nurl: https://www.adp.com\ntfa: No\n\n'],
+    [DIFF_EQUAL, 'name: Adirondack Insurance Exchange\nurl: http://www.aie-ny.com/\nimg: adirondackinsurnaceexchange.png\n'],
+    [DIFF_INSERT, 'tfa: No\n\nname: ADP\nurl: https://www.adp.com\n'],
+    [DIFF_EQUAL, 'tfa: No\n\nname: Credit Karma'],
+  ];
+  dmp.diff_cleanupSemanticLossless(diffs);
+  assertEquivalent([
+    [DIFF_EQUAL, 'websites:\n'],
+    [DIFF_DELETE, 'name: ADP\nurl: https://www.adp.com\ntfa: No\n\n'],
+    [DIFF_EQUAL, 'name: Adirondack Insurance Exchange\nurl: http://www.aie-ny.com/\nimg: adirondackinsurnaceexchange.png\ntfa: No\n\n'],
+    [DIFF_INSERT, 'name: ADP\nurl: https://www.adp.com\ntfa: No\n\n'],
+    [DIFF_EQUAL, 'name: Credit Karma'],
+  ], diffs);
 
   // Line boundaries.
   diffs = [[DIFF_EQUAL, 'AAA\r\nBBB'], [DIFF_INSERT, ' DDD\r\nBBB'], [DIFF_EQUAL, ' EEE']];
@@ -635,6 +651,20 @@ function testDiffMain() {
   }
 }
 
+function testDiffLineMode() {
+  // Test lines aligment (at the blank line border) in line-mode.
+  a = 'websites:\n    - name: ADP\n      url: https://www.adp.com\n      twitter: adp\n      img: adp.png\n      tfa: No\n\n    - name: Adirondack Insurance Exchange\n      url: http://www.aie-ny.com/\n      img: adirondackinsurnaceexchange.png\n      tfa: No\n\n    - name: Credit Karma\n      url: https://www.creditkarma.com\n      twitter: creditkarma';
+  b = 'websites:\n    - name: Adirondack Insurance Exchange\n      url: http://www.aie-ny.com/\n      img: adirondackinsurnaceexchange.png\n      tfa: No\n\n    - name: ADP\n      url: https://www.adp.com\n      twitter: adp\n      img: adp.png\n      tfa: No\n\n    - name: Credit Karma\n      url: https://www.creditkarma.com\n      twitter: creditkarma';
+  assertEquivalent(
+    [
+      [DIFF_EQUAL, 'websites:\n'],
+      [DIFF_DELETE, '    - name: ADP\n      url: https://www.adp.com\n      twitter: adp\n      img: adp.png\n      tfa: No\n\n'],
+      [DIFF_EQUAL, '    - name: Adirondack Insurance Exchange\n      url: http://www.aie-ny.com/\n      img: adirondackinsurnaceexchange.png\n      tfa: No\n\n'],
+      [DIFF_INSERT, '    - name: ADP\n      url: https://www.adp.com\n      twitter: adp\n      img: adp.png\n      tfa: No\n\n'],
+      [DIFF_EQUAL, '    - name: Credit Karma\n      url: https://www.creditkarma.com\n      twitter: creditkarma']
+    ], dmp.diff_lineMode_(a, b)
+  );
+}
 
 // MATCH TEST FUNCTIONS
 
