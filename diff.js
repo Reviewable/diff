@@ -17,7 +17,7 @@
  */
 
 /**
- * Modified by Piotr Kaminski.
+ * Modified by Piotr Kaminski and Sergei Vorobev.
  */
 
 /**
@@ -131,13 +131,21 @@ diff.prototype.diff_main = function(text1, text2, opt_checklines,
   var checklines = opt_checklines;
 
   // Trim off common prefix (speedup).
-  var commonlength = this.diff_commonPrefix(text1, text2);
+  if (checklines) {
+    var commonlength = this.diff_commonPrefix_newLine(text1, text2);
+  } else {
+    var commonlength = this.diff_commonPrefix(text1, text2);
+  }
   var commonprefix = text1.substring(0, commonlength);
   text1 = text1.substring(commonlength);
   text2 = text2.substring(commonlength);
 
   // Trim off common suffix (speedup).
-  commonlength = this.diff_commonSuffix(text1, text2);
+  if (checklines) {
+    commonlength = this.diff_commonSuffix_newLine(text1, text2);
+  } else {
+    commonlength = this.diff_commonSuffix(text1, text2);
+  }
   var commonsuffix = text1.substring(text1.length - commonlength);
   text1 = text1.substring(0, text1.length - commonlength);
   text2 = text2.substring(0, text2.length - commonlength);
@@ -570,6 +578,32 @@ diff.prototype.diff_commonPrefix = function(text1, text2) {
   return pointermid;
 };
 
+/**
+ * Determine the common prefix of two strings making delimitors only at new lines.
+ * @param {string} text1 First string.
+ * @param {string} text2 Second string.
+ * @return {number} The number of characters common to the start of each
+ *     string.
+ */
+ diff.prototype.diff_commonPrefix_newLine = function(text1, text2) {
+  var idx = this.diff_commonPrefix(text1, text2);
+  // special handling for the case when the whole string is matching
+  if (idx == text1.length && idx == text2.length) {
+    return idx;
+  }
+  if (idx == text1.length && text2[idx] == "\n") {
+    return idx
+  }
+  if (idx == text2.length && text1[idx] == "\n") {
+    return idx
+  }
+  var offset = text1.substring(0, idx).lastIndexOf("\n");
+  if (offset == -1) {
+    return 0;
+  }
+  return offset + 1;
+};
+
 
 /**
  * Determine the common suffix of two strings.
@@ -600,6 +634,31 @@ diff.prototype.diff_commonSuffix = function(text1, text2) {
     pointermid = Math.floor((pointermax - pointermin) / 2 + pointermin);
   }
   return pointermid;
+};
+
+/**
+ * Determine the common suffix of two strings making delimitors only at new lines.
+ * @param {string} text1 First string.
+ * @param {string} text2 Second string.
+ * @return {number} The number of characters common to the end of each string.
+ */
+ diff.prototype.diff_commonSuffix_newLine = function(text1, text2) {
+  var idx = this.diff_commonSuffix(text1, text2);
+  // special handling for the case when the whole string is matching
+  if (idx == text1.length && idx == text2.length) {
+    return idx;
+  }
+  if (idx == text1.length && text2[text2.length - idx - 1] == "\n") {
+    return idx
+  }
+  if (idx == text2.length && text1[text1.length - idx - 1] == "\n") {
+    return idx
+  }
+  var offset = text1.substring(text1.length - idx).indexOf("\n");
+  if (offset == -1) {
+    return 0;
+  }
+  return idx - offset;
 };
 
 

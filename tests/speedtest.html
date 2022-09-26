@@ -20,7 +20,7 @@ function launch() {
   // No warmup loop since it risks triggering an 'unresponsive script' dialog
   // in client-side JavaScript
   var ms_start = (new Date()).getTime();
-  var d = dmp.diff_main(text1, text2, false);
+  var d = dmp.diff_main(text1, text2, true);
   var ms_end = (new Date()).getTime();
 
   var ds = dmp.diff_prettyHtml(d);

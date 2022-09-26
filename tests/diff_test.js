@@ -91,6 +91,22 @@ function testDiffCommonPrefix() {
   assertEquals(4, dmp.diff_commonPrefix('1234', '1234xyz'));
 }
 
+function testDiffCommonPrefixNewLine() {
+  // Detect any common prefix in repsect to new lines.
+  // Null case.
+  assertEquals(0, dmp.diff_commonPrefix_newLine('abc', 'abx'));
+
+  // Non-null case.
+  assertEquals(3, dmp.diff_commonPrefix_newLine('12\n34abcdef', '12\n34xyz'));
+
+  // Multiply \n case.
+  assertEquals(6, dmp.diff_commonPrefix_newLine('12\n34\n1abcdef', '12\n34\n1xyz'));
+
+  // Whole case.
+  assertEquals(4, dmp.diff_commonPrefix_newLine('1234', '1234\nxyz'));
+  assertEquals(0, dmp.diff_commonPrefix_newLine('1234', '12345\nxyz'));
+}
+
 function testDiffCommonSuffix() {
   // Detect any common suffix.
   // Null case.
@@ -101,6 +117,22 @@ function testDiffCommonSuffix() {
 
   // Whole case.
   assertEquals(4, dmp.diff_commonSuffix('1234', 'xyz1234'));
+}
+
+function testDiffCommonSuffixNewLine() {
+  // Detect any common suffix in respect to new lines.
+  // Null case.
+  assertEquals(0, dmp.diff_commonSuffix_newLine('abc', 'xbc'));
+
+  // Non-null case.
+  assertEquals(3, dmp.diff_commonSuffix_newLine('abcdef12\n34', 'xyz12\n34'));
+
+  // Multiply \n case.
+  assertEquals(6, dmp.diff_commonSuffix_newLine('abcdef1\n12\n34', 'xyz1\n12\n34'));
+
+  // Whole case.
+  assertEquals(4, dmp.diff_commonSuffix_newLine('1234', 'xyz\n1234'));
+  assertEquals(0, dmp.diff_commonSuffix_newLine('1234', 'xyz\n01234'));
 }
 
 function testDiffCommonOverlap() {
@@ -586,6 +618,11 @@ function testDiffMain() {
 
   // Large equality.
   assertEquivalent([[DIFF_INSERT, ' '], [DIFF_EQUAL, 'a'], [DIFF_INSERT, 'nd'], [DIFF_EQUAL, ' [[Pennsylvania]]'], [DIFF_DELETE, ' and [[New']], dmp.diff_main('a [[Pennsylvania]] and [[New', ' and [[Pennsylvania]]', false));
+
+  // Codifying a suboptimal but a technically correct diff
+  assertEquivalent([[DIFF_EQUAL, 'def x():\n    pass\n\ndef '], [DIFF_DELETE, 'y():\n    pass\n\ndef '], [DIFF_EQUAL, 'z():\n    pass\n']], dmp.diff_main('def x():\n    pass\n\ndef y():\n    pass\n\ndef z():\n    pass\n', 'def x():\n    pass\n\ndef z():\n    pass\n', false));
+  // Better diff when multiline heuristic is used
+  assertEquivalent([[DIFF_EQUAL, 'def x():\n    pass\n\n'], [DIFF_DELETE, 'def y():\n    pass\n\n'], [DIFF_EQUAL, 'def z():\n    pass\n']], dmp.diff_main('def x():\n    pass\n\ndef y():\n    pass\n\ndef z():\n    pass\n', 'def x():\n    pass\n\ndef z():\n    pass\n', true));
 
   // Timeout.
   dmp.Diff_Timeout = 0.1;  // 100ms
