@@ -1,0 +1,93 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html>
+  <head>
+    <style>
+      table {
+        border-spacing: 10px;
+        border-collapse: separate;
+      }
+      .monospace {
+        font-family: monospace;
+      }
+      button {
+        padding: 0.5em 1em;
+      }
+      .centered {
+        text-align: center;
+      }
+      .left.line.edit, .left.line.replace {
+        background-color: rgba(240, 92, 92, 0.10);
+      }
+      .right.line.edit, .right.line.replace {
+        background-color: rgba(91, 220, 114, 0.10);
+      }
+      .left.line .delta {
+        background-color: rgba(240, 92, 92, 0.20);
+      }
+      .right.line .delta {
+        background-color: rgba(91, 220, 114, 0.20);
+      }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js"></script>
+    <script type="text/javascript" src="../diff.js"></script>
+    <script type="text/javascript">
+      const INPUT_NAMES = ['left', 'right', 'left-base', 'right-base'];
+      const dmp = new diff();
+      function goDiff() {
+        let blocks = null;
+        try {
+          saveInputs();
+          const left = document.getElementById('left').value;
+          const right = document.getElementById('right').value;
+          const leftBase = document.getElementById('left-base').value;
+          const rightBase = document.getElementById('right-base').value;
+          blocks = dmp.diff_mainToBlocks(left, right, leftBase, rightBase, 'all');
+          const html = dmp.diff_renderBlocks(blocks, left, right);
+          document.getElementById('error').innerText = '';
+          document.getElementById('output').innerHTML = html;
+        } catch (e) {
+          document.getElementById('error').innerText =
+            e.stack + '\n\nblocks = ' + JSON.stringify(blocks, null, 2);
+          document.getElementById('output').innerHTML = '';
+        }
+      }
+
+      function saveInputs() {
+        for (const name of INPUT_NAMES) {
+          localStorage.setItem(name, document.getElementById(name).value);
+        }
+      }
+
+      function loadInputs() {
+        for (const name of INPUT_NAMES) {
+          document.getElementById(name).value = localStorage.getItem(name) || '';
+        }
+      }
+</script>
+  </head>
+  <body>
+    <h2>Interactive Diff Test</h2>
+    <table style="width:100%">
+      <tr>
+        <td style="width:50%"><textarea id="left" class="monospace"
+            style="width:100%; height: 25em;"></textarea></td>
+        <td style="width:50%"><textarea id="right" class="monospace"
+            style="width:100%; height: 25em;"></textarea></td>
+      </tr>
+      <tr>
+        <td style="width:50%"><textarea id="left-base" class="monospace"
+            style="width:100%; height: 25em;"></textarea></td>
+        <td style="width:50%"><textarea id="right-base" class="monospace"
+            style="width:100%; height: 25em;"></textarea></td>
+      </tr>
+      <tr>
+        <td colspan="2" class="centered"><button onclick="goDiff()">Diff</button></td>
+      </tr>
+    </table>
+    <pre class="monospace" id="error"></pre>
+    <pre id="output" class="monospace"></pre>
+    <script type="text/javascript">
+      loadInputs();
+    </script>
+  </body>
+</html>

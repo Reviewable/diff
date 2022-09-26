@@ -64,6 +64,11 @@ var DIFF_DELETE = -1;
 var DIFF_INSERT = 1;
 var DIFF_EQUAL = 0;
 
+
+// A regex equivalent to \s but without the \n.
+const WHITESPACE_REGEX = /[ \f\r\t\v​\u00a0\u1680​\u180e\u2000​\u2001\u2002​\u2003\u2004​\u2005\u2006​\u2007\u2008​\u2009\u200a​\u2028\u2029​​\u202f\u205f​\u3000]/g;
+const EOF_WHITESPACE_REGEX = /\n[ \f\r\t\v​\u00a0\u1680​\u180e\u2000​\u2001\u2002​\u2003\u2004​\u2005\u2006​\u2007\u2008​\u2009\u200a​\u2028\u2029​​\u202f\u205f​\u3000]+$/;
+
 /**
  * Class representing one diff tuple.
  * Attempts to look like a two-element array (which is what this used to be).
@@ -1350,99 +1355,304 @@ diff.prototype.diff_levenshtein = function(diffs) {
 };
 
 
-/**
- * Crush the diff into an encoded string which describes the operations
- * required to transform text1 into text2.
- * E.g. =3\t-2\t+ing  -> Keep 3 chars, delete 2 chars, insert 'ing'.
- * Operations are tab-separated.  Inserted text is escaped using %xx notation.
- * @param {!Array.<!diff.Diff>} diffs Array of diff tuples.
- * @return {string} Delta text.
- */
-diff.prototype.diff_toDelta = function(diffs) {
-  var text = [];
-  for (var x = 0; x < diffs.length; x++) {
-    switch (diffs[x][0]) {
-      case DIFF_INSERT:
-        text[x] = '+' + encodeURI(diffs[x][1]);
-        break;
-      case DIFF_DELETE:
-        text[x] = '-' + diffs[x][1].length;
-        break;
-      case DIFF_EQUAL:
-        text[x] = '=' + diffs[x][1].length;
-        break;
-    }
+diff.prototype.diff_mainToBlocks = function(
+  left, right, leftBase, rightBase, significantWhitespace
+) {
+  const array = this.diff_linesToChars_(
+    left.replace(EOF_WHITESPACE_REGEX, '\n\x00').replace(WHITESPACE_REGEX, ''),
+    right.replace(EOF_WHITESPACE_REGEX, '\n\x00').replace(WHITESPACE_REGEX, '')
+  );
+  const lineDiffs = this.diff_main(array.chars1, array.chars2, false);
+  // this.diff_cleanupSemantic(lineDiffs);
+  const lineCounts = _.map(lineDiffs, diff => diff[1].length);
+  const unchanged = {
+    leftHeadToBase: [], leftBaseToHead: [], rightHeadToBase: [], rightBaseToHead: [],
+    leftBaseToRightBase: [], rightBaseToLeftBase: []
+  };
+  if (left && leftBase) {
+    [unchanged.leftBaseToHead, unchanged.leftHeadToBase] =
+      this.diff_findUnchangedLineRanges_(leftBase, left);
   }
-  return text.join('\t').replace(/%20/g, ' ');
+  if (right && rightBase) {
+    [unchanged.rightBaseToHead, unchanged.rightHeadToBase] =
+      this.diff_findUnchangedLineRanges_(rightBase, right);
+  }
+  if (leftBase && rightBase) {
+    [unchanged.leftBaseToRightBase, unchanged.rightBaseToLeftBase] =
+      this.diff_findUnchangedLineRanges_(leftBase, rightBase);
+  }
+  return this.diff_composeBlocks_(
+    lineDiffs, lineCounts, left, right, unchanged, significantWhitespace);
+}
+
+diff.prototype.diff_findUnchangedLineRanges_ = function(left, right) {
+  const a = this.diff_linesToChars_(left, right);
+  const diffs = this.diff_main(a.chars1, a.chars2, false);
+  const leftLineRanges = [], rightLineRanges = [];
+  // line numbers off by one on purpose, for _.sortedIndex
+  let leftLineNumber = 0, rightLineNumber = 0;
+  _.forEach(diffs, diff => {
+    if (diff[0] === 0) {
+      rightLineRanges.push(rightLineNumber, rightLineNumber + diff[1].length);
+      leftLineRanges.push(leftLineNumber, leftLineNumber + diff[1].length);
+    }
+    if (diff[0] >= 0) rightLineNumber += diff[1].length;
+    if (diff[0] <= 0) leftLineNumber += diff[1].length;
+  });
+  return [leftLineRanges, rightLineRanges];
 };
 
+diff.prototype.diff_composeBlocks_ = function(
+  lineDiffs, lineCounts, leftText, rightText, unchanged, significantWhitespace
+) {
+  const dmp = this;
+  const leftLines = leftText ? leftText.split('\n') : [];
+  const rightLines = rightText ? rightText.split('\n') : [];
+  let leftLineNumber = 1, rightLineNumber = 1;
+  const blocks = [];
 
-/**
- * Given the original text1, and an encoded string which describes the
- * operations required to transform text1 into text2, compute the full diff.
- * @param {string} text1 Source string for the diff.
- * @param {string} delta Delta text.
- * @return {!Array.<!diff.Diff>} Array of diff tuples.
- * @throws {!Error} If invalid input.
- */
-diff.prototype.diff_fromDelta = function(text1, delta) {
-  var diffs = [];
-  var diffsLength = 0;  // Keeping our own length var is faster in JS.
-  var pointer = 0;  // Cursor in text1
-  var tokens = delta.split(/\t/g);
-  for (var x = 0; x < tokens.length; x++) {
-    // Each token begins with a one character parameter which specifies the
-    // operation of this token (delete, insert, equality).
-    var param = tokens[x].substring(1);
-    switch (tokens[x].charAt(0)) {
-      case '+':
-        try {
-          diffs[diffsLength++] =
-              new diff.Diff(DIFF_INSERT, decodeURI(param));
-        } catch (ex) {
-          // Malformed URI sequence.
-          throw new Error('Illegal escape in diff_fromDelta: ' + param);
+  function mergeSide(side, lastSide) {
+    if (side.range) {
+      if (lastSide.range) {
+        if (side.range[0] !== lastSide.range[1] + 1) {
+          throw new Error(
+            'Internal error: mergeable left block range mismatch, last=' + lastSide.range +
+            ', next=' + side.range);
         }
-        break;
-      case '-':
-        // Fall through.
-      case '=':
-        var n = parseInt(param, 10);
-        if (isNaN(n) || n < 0) {
-          throw new Error('Invalid number in diff_fromDelta: ' + param);
-        }
-        var text = text1.substring(pointer, pointer += n);
-        if (tokens[x].charAt(0) == '=') {
-          diffs[diffsLength++] = new diff.Diff(DIFF_EQUAL, text);
-        } else {
-          diffs[diffsLength++] = new diff.Diff(DIFF_DELETE, text);
-        }
-        break;
-      default:
-        // Blank tokens are ok (from a trailing \t).
-        // Anything else is an error.
-        if (tokens[x]) {
-          throw new Error('Invalid diff operation in diff_fromDelta: ' +
-                          tokens[x]);
-        }
+        side.range[0] = lastSide.range[0];
+      }
+      lastSide.range = side.range;
+    }
+    if (side.diffs) {
+      lastSide.diffs = lastSide.diffs || [];
+      lastSide.diffs.push.apply(lastSide.diffs, side.diffs);
     }
   }
-  if (pointer != text1.length) {
-    throw new Error('Delta length (' + pointer +
-        ') does not equal source text length (' + text1.length + ').');
+
+  function isExcluded(block) {
+    if (!(block.left.range || block.right.range)) return false;
+    const leftUnchangedIndex = block.left.range ?
+      _.sortedIndex(unchanged.leftHeadToBase, block.left.range[0]) : -1;
+    const rightUnchangedIndex = block.right.range ?
+      _.sortedIndex(unchanged.rightHeadToBase, block.right.range[0]) : -1;
+    if (block.left.range && leftUnchangedIndex % 2 === 0) return false;
+    if (block.right.range && rightUnchangedIndex % 2 === 0) return false;
+    if (block.left.range && block.right.range) return true;
+    if (block.left.range) {  // left unchanged, no right range
+      const leftBaseLine =
+        unchanged.leftBaseToHead[leftUnchangedIndex - 1] + block.left.range[0] -
+        unchanged.leftHeadToBase[leftUnchangedIndex - 1];
+      if (_.sortedIndex(unchanged.leftBaseToRightBase, leftBaseLine) % 2 === 1) return false;
+    } else {  // right unchanged, no left range
+      const rightBaseLine =
+        unchanged.rightBaseToHead[rightUnchangedIndex - 1] + block.right.range[0] -
+        unchanged.rightHeadToBase[rightUnchangedIndex - 1];
+      if (_.sortedIndex(unchanged.rightBaseToLeftBase, rightBaseLine) % 2 === 1) return false;
+    }
+    return true;
   }
-  return diffs;
+
+  function addBlock(block) {
+    block.left = block.left || {};
+    block.right = block.right || {};
+    block.quals = block.quals || {};
+    if (block.op !== 'keep' && isExcluded(block)) block.quals.base = true;
+    const lastBlock = _.last(blocks);
+    if (lastBlock && block.op === lastBlock.op && (_.isEqual(block.quals, lastBlock.quals) || (
+      // Allow only one side to be a base diff, and if so merge and drop the base qual.
+      (block.left.range && !lastBlock.left.range ||
+        block.right.range && !lastBlock.right.range) &&
+      _.isEqual(_.omit(block.quals, 'base'), _.omit(lastBlock.quals, 'base'))
+    ))) {
+      if (lastBlock.quals.base && !block.quals.base) delete lastBlock.quals.base;
+      mergeSide(block.left, lastBlock.left);
+      mergeSide(block.right, lastBlock.right);
+    } else {
+      explodeLastBlock();
+      blocks.push(block);
+    }
+  }
+
+  function explodeLastBlock() {
+    const lastBlock = _.last(blocks);
+    if (lastBlock && lastBlock.op === 'change') {
+      if (lastBlock.left.range && lastBlock.right.range) {
+        blocks.pop();
+        explodeDiffs(lastBlock, dmp.diff_analyzeChangeBlock_(lastBlock, leftLines, rightLines));
+      } else {
+        lastBlock.op = 'replace';
+      }
+    }
+  }
+
+  function explodeDiffs(lastBlock, intraDiffs) {
+    let leftNum = lastBlock.left.range[0], rightNum = lastBlock.right.range[0];
+    const numDiffLines = intraDiffs[0].length;
+    for (let i = 0; i < numDiffLines; i++) {
+      const block = {left: {}, right: {}};
+      const pair = [intraDiffs[0][i], intraDiffs[1][i]];
+      block.op = _.every(pair, diffList => _.every(diffList, 0)) ? 'replace' : 'edit';
+      block.quals = lastBlock.quals;
+      if (pair[0].length || lastBlock.left.range[1] - leftNum + 1 === numDiffLines - i) {
+        block.left = {range: [leftNum, leftNum]};
+        leftNum++;
+      }
+      if (pair[1].length || lastBlock.right.range[1] - rightNum + 1 === numDiffLines - i) {
+        block.right = {range: [rightNum, rightNum]};
+        rightNum++;
+      }
+      if (block.op !== 'replace') {
+        block.left.diffs = [pair[0]];
+        block.right.diffs = [pair[1]];
+      }
+      addBlock(block);
+    }
+  }
+
+  for (let i = 0; i < lineDiffs.length; i++) {
+    const lineDiff = lineDiffs[i];
+    for (let j = 0; j < lineCounts[i]; j++) {
+      switch (lineDiff[0]) {
+        case DIFF_DELETE:
+          addBlock({
+            op: 'change', left: {range: [leftLineNumber + j, leftLineNumber + j]}
+          });
+          break;
+        case DIFF_INSERT:
+          addBlock({
+            op: 'change', right: {range: [rightLineNumber + j, rightLineNumber + j]}
+          });
+          break;
+        case DIFF_EQUAL: {
+          const same = leftLines[leftLineNumber + j - 1] === rightLines[rightLineNumber + j - 1];
+          let whitespace = significantWhitespace !== 'all' && !same;
+          if (whitespace && significantWhitespace === 'leading') {
+            const leftMatch = leftLines[leftLineNumber + j - 1].match(/^\s*/)[0];
+            const rightMatch = rightLines[rightLineNumber + j - 1].match(/^\s*/)[0];
+            whitespace = leftMatch === rightMatch;
+          }
+          addBlock({
+            op: same ? 'keep' : 'change',
+            quals: whitespace ? {whitespace: true} : {},
+            left: {range: [leftLineNumber + j, leftLineNumber + j]},
+            right: {range: [rightLineNumber + j, rightLineNumber + j]}
+          });
+          break;
+        }
+      }
+    }
+    if (lineDiff[0] <= 0) leftLineNumber += lineCounts[i];
+    if (lineDiff[0] >= 0) rightLineNumber += lineCounts[i];
+  }
+  explodeLastBlock();
+
+  if (blocks.length) {
+    if (leftText && leftText.slice(-1) !== '\n') _.last(blocks).left.missingNewline = true;
+    if (rightText && rightText.slice(-1) !== '\n') _.last(blocks).right.missingNewline = true;
+  }
+
+  return blocks;
 };
 
+diff.prototype.diff_analyzeChangeBlock_ = function(block, leftLines, rightLines) {
+  const left = leftLines.slice(block.left.range[0] - 1, block.left.range[1]).join('\n');
+  const right = rightLines.slice(block.right.range[0] - 1, block.right.range[1]).join('\n');
+  const diffs = this.diff_main(left, right, false);
+  this.diff_cleanupSemantic(diffs);
+  const leftDiffs = [[]], rightDiffs = [[]];
 
-// In a browser, 'this' will be 'window'.
-// Users of node.js should 'require' the uncompressed version since Google's
-// JS compiler may break the following exports for non-browser environments.
-/** @suppress {globalThis} */
-this['diff'] = diff;
-/** @suppress {globalThis} */
-this['DIFF_DELETE'] = DIFF_DELETE;
-/** @suppress {globalThis} */
-this['DIFF_INSERT'] = DIFF_INSERT;
-/** @suppress {globalThis} */
-this['DIFF_EQUAL'] = DIFF_EQUAL;
+  function balanceDiffs(offset) {
+    const numLinesMissing = Math.abs(leftDiffs.length - rightDiffs.length);
+    if (numLinesMissing) {
+      const shorterDiffs = leftDiffs.length < rightDiffs.length ? leftDiffs : rightDiffs;
+      if (offset === -1 && _.some(_.last(shorterDiffs), diff => diff && !diff[0])) return;
+      for (let i = 0; i < numLinesMissing; i++) shorterDiffs.splice(offset, 0, []);
+    }
+  }
+
+  function pushDiff(list, diff) {
+    const last = _.last(list);
+    if (last.length && _.last(last)[0] === diff[0]) {
+      _.last(last)[1] += diff[1];
+    } else {
+      last.push(diff);
+    }
+  }
+
+  function cleanDiffs(list) {
+    for (let i = 0; i < list.length; i++) {
+      const entry = list[i];
+      if (entry.length >= 2 && /^( +|\t+|\u00a0+)$/.test(entry[0][1] + entry[1][1])) {
+        entry.splice(0, 2, entry[1], entry[0]);
+      }
+    }
+  }
+
+  for (let j = 0; j < diffs.length; j++) {
+    const diff = diffs[j];
+    const segs = diff[1].split('\n');
+    for (let k = 0; k < segs.length; k++) {
+      if (diff[0] === 0) balanceDiffs(-1);
+      if (k > 0) {
+        switch (diff[0]) {
+          case 0:
+            pushDiff(leftDiffs, [false, '']);
+            pushDiff(rightDiffs, [false, '']);
+            break;
+          case -1:
+            pushDiff(leftDiffs, [true, '']);
+            break;
+          case 1:
+            pushDiff(rightDiffs, [true, '']);
+            break;
+        }
+        if (diff[0] <= 0) leftDiffs.push([]);
+        if (diff[0] >= 0) rightDiffs.push([]);
+      }
+      if (diff[0] <= 0) pushDiff(leftDiffs, [diff[0] !== 0, this.escapeHtml(segs[k])]);
+      if (diff[0] >= 0) pushDiff(rightDiffs, [diff[0] !== 0, this.escapeHtml(segs[k])]);
+    }
+  }
+  cleanDiffs(leftDiffs);
+  cleanDiffs(rightDiffs);
+  balanceDiffs(Infinity);
+
+  return [leftDiffs, rightDiffs];
+};
+
+diff.prototype.escapeHtml = function(value) {
+  // Escape diff results to match the escaping done by the syntax highlighter, so that the segment
+  // lengths will line up correctly.  Check against escapeHTML in
+  // https://github.com/highlightjs/highlight.js/blob/master/src/lib/utils.js.
+  return value.replace(/&/gm, '&amp;').replace(/</gm, '&lt;').replace(/>/gm, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#x27;');
+};
+
+diff.prototype.diff_renderBlocks = function(blocks, left, right) {
+  const dmp = this;
+  const leftLines = left.split('\n'), rightLines = right.split('\n');
+  const html = [];
+
+  function renderSide(block, side, lines) {
+    if (block[side].diffs) {
+      for (const lineDiffs of block[side].diffs) {
+        html.push(`<div class="${side} line ${block.op}">`);
+        for (const diff of lineDiffs) {
+          html.push(`<span${diff[0] ? ' class="delta"' : ''}>`, diff[1], '</span>');
+        }
+        html.push('</div>');
+      }
+    } else {
+      for (let i = block[side].range[0] - 1; i < block[side].range[1]; i++) {
+        html.push(
+          `<div class="${side} line ${block.op}">`, dmp.escapeHtml(lines[i]) || '&nbsp;', '</div>');
+      }
+    }
+  }
+
+  for (const block of blocks) {
+    if (block.left.range) renderSide(block, 'left', leftLines);
+    if (block.op !== 'keep' && block.right.range) renderSide(block, 'right', rightLines);
+  }
+  return html.join('');
+};
