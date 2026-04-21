@@ -292,6 +292,20 @@ function testDiffCleanupMerge() {
   diffs = [[DIFF_EQUAL, ''], [DIFF_INSERT, 'a'], [DIFF_EQUAL, 'b']];
   dmp.diff_cleanupMerge(diffs);
   assertEquivalent([[DIFF_INSERT, 'a'], [DIFF_EQUAL, 'b']], diffs);
+
+  // Deep shift cascade used to recurse once per equality.
+  var cascadeLength = 10000;
+  var repeatedA = new Array(cascadeLength + 1).join('a');
+  diffs = [];
+  for (var i = 0; i < cascadeLength - 1; i++) {
+    diffs.push([DIFF_EQUAL, 'a'], [DIFF_DELETE, 'x']);
+  }
+  diffs.push([DIFF_EQUAL, 'a'], [DIFF_DELETE, repeatedA], [DIFF_EQUAL, 'z']);
+  dmp.diff_cleanupMerge(diffs);
+  assertEquivalent([
+    [DIFF_DELETE, new Array(cascadeLength).join('ax') + 'a'],
+    [DIFF_EQUAL, repeatedA + 'z']
+  ], diffs);
 }
 
 function testDiffCleanupSemanticLossless() {
@@ -634,4 +648,3 @@ function testDiffMain() {
     // Exception expected.
   }
 }
-
