@@ -640,6 +640,15 @@ function testDiffMain() {
   var texts_textmode = diff_rebuildtexts(dmp.diff_main(a, b, false));
   assertEquivalent(texts_textmode, texts_linemode);
 
+  // Large line-mode stress case.
+  a = '';
+  b = '';
+  for (i = 0; i < 2000; i++) {
+    a += 'left-' + i + '\n';
+    b += 'right-' + i + '\n';
+  }
+  assertEquivalent([a, b], diff_rebuildtexts(dmp.diff_main(a, b, true)));
+
   // Test null inputs.
   try {
     dmp.diff_main(null, null);

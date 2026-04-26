@@ -128,59 +128,147 @@ diff.prototype.diff_main = function(text1, text2, opt_checklines,
   if (typeof opt_checklines == 'undefined') {
     opt_checklines = true;
   }
-  var checklines = opt_checklines;
-
-  // Trim off common prefix (speedup).
-  var commonlength = this.diff_commonPrefix(text1, text2);
-  var commonprefix = text1.substring(0, commonlength);
-  text1 = text1.substring(commonlength);
-  text2 = text2.substring(commonlength);
-
-  // Trim off common suffix (speedup).
-  commonlength = this.diff_commonSuffix(text1, text2);
-  var commonsuffix = text1.substring(text1.length - commonlength);
-  text1 = text1.substring(0, text1.length - commonlength);
-  text2 = text2.substring(0, text2.length - commonlength);
-
-  // Compute the diff on the middle block.
-  var diffs = this.diff_compute_(text1, text2, checklines, deadline);
-
-  // Restore the prefix and suffix.
-  if (commonprefix) {
-    diffs.unshift(new diff.Diff(DIFF_EQUAL, commonprefix));
-  }
-  if (commonsuffix) {
-    diffs.push(new diff.Diff(DIFF_EQUAL, commonsuffix));
-  }
-  this.diff_cleanupMerge(diffs);
-  return diffs;
+  return this.diff_mainInternal_(text1, text2, opt_checklines, deadline);
 };
 
 
 /**
- * Find the differences between two texts.  Assumes that the texts do not
- * have any common prefix or suffix.
+ * Iterative implementation of diff_main's divide-and-conquer flow.
+ * Uses an explicit work stack so large diffs don't rely on the JS call stack.
+ * @param {string} text1 Old string to be diffed.
+ * @param {string} text2 New string to be diffed.
+ * @param {boolean} checklines Speedup flag.
+ * @param {number} deadline Time when the diff should be complete by.
+ * @return {!Array.<!diff.Diff>} Array of diff tuples.
+ * @private
+ */
+diff.prototype.diff_mainInternal_ = function(text1, text2, checklines,
+    deadline) {
+  var stack = [{type: 'main', text1: text1, text2: text2,
+                checklines: checklines}];
+  var results = [];
+  while (stack.length) {
+    var frame = stack.pop();
+    switch (frame.type) {
+      case 'main':
+        if (frame.text1 == frame.text2) {
+          results.push(frame.text1 ?
+              [new diff.Diff(DIFF_EQUAL, frame.text1)] : []);
+          continue;
+        }
+
+        // Trim off common prefix (speedup).
+        var commonlength = this.diff_commonPrefix(frame.text1, frame.text2);
+        var commonprefix = frame.text1.substring(0, commonlength);
+        var trimmedText1 = frame.text1.substring(commonlength);
+        var trimmedText2 = frame.text2.substring(commonlength);
+
+        // Trim off common suffix (speedup).
+        commonlength = this.diff_commonSuffix(trimmedText1, trimmedText2);
+        var commonsuffix =
+            trimmedText1.substring(trimmedText1.length - commonlength);
+        trimmedText1 =
+            trimmedText1.substring(0, trimmedText1.length - commonlength);
+        trimmedText2 =
+            trimmedText2.substring(0, trimmedText2.length - commonlength);
+
+        stack.push({type: 'main_finalize', commonprefix: commonprefix,
+                    commonsuffix: commonsuffix});
+        stack.push({type: 'compute', text1: trimmedText1, text2: trimmedText2,
+                    checklines: frame.checklines});
+        continue;
+
+      case 'compute':
+        var compute = this.diff_computeOperation_(frame.text1, frame.text2,
+                                                  frame.checklines, deadline);
+        switch (compute.type) {
+          case 'diffs':
+            results.push(compute.diffs);
+            continue;
+
+          case 'half_match':
+            stack.push({type: 'half_finalize', mid_common: compute.mid_common});
+            stack.push({type: 'main', text1: compute.text1_b,
+                        text2: compute.text2_b,
+                        checklines: compute.checklines});
+            stack.push({type: 'main', text1: compute.text1_a,
+                        text2: compute.text2_a,
+                        checklines: compute.checklines});
+            continue;
+
+          case 'bisect_split':
+            stack.push({type: 'concat_finalize'});
+            stack.push({type: 'main', text1: frame.text1.substring(compute.x),
+                        text2: frame.text2.substring(compute.y),
+                        checklines: false});
+            stack.push({type: 'main', text1: frame.text1.substring(0, compute.x),
+                        text2: frame.text2.substring(0, compute.y),
+                        checklines: false});
+            continue;
+
+          default:
+            throw new Error('Unknown diff_computeOperation_ type: ' +
+                            compute.type);
+        }
+
+      case 'main_finalize':
+        var finalDiffs = results.pop();
+        if (frame.commonprefix) {
+          finalDiffs.unshift(new diff.Diff(DIFF_EQUAL, frame.commonprefix));
+        }
+        if (frame.commonsuffix) {
+          finalDiffs.push(new diff.Diff(DIFF_EQUAL, frame.commonsuffix));
+        }
+        this.diff_cleanupMerge(finalDiffs);
+        results.push(finalDiffs);
+        continue;
+
+      case 'half_finalize':
+        var diffs_b = results.pop();
+        var diffs_a = results.pop();
+        results.push(diffs_a.concat([new diff.Diff(DIFF_EQUAL, frame.mid_common)],
+                                    diffs_b));
+        continue;
+
+      case 'concat_finalize':
+        var right = results.pop();
+        var left = results.pop();
+        results.push(left.concat(right));
+        continue;
+
+      default:
+        throw new Error('Unknown diff_mainInternal_ frame type: ' + frame.type);
+    }
+  }
+
+  return results.pop();
+};
+
+
+/**
+ * Decide how to compute the differences between two texts that do not have any
+ * common prefix or suffix.
  * @param {string} text1 Old string to be diffed.
  * @param {string} text2 New string to be diffed.
  * @param {boolean} checklines Speedup flag.  If false, then don't run a
  *     line-level diff first to identify the changed areas.
  *     If true, then run a faster, slightly less optimal diff.
  * @param {number} deadline Time when the diff should be complete by.
- * @return {!Array.<!diff.Diff>} Array of diff tuples.
+ * @return {!Object} Operation descriptor for the next diff step.
  * @private
  */
-diff.prototype.diff_compute_ = function(text1, text2, checklines,
+diff.prototype.diff_computeOperation_ = function(text1, text2, checklines,
     deadline) {
   var diffs;
 
   if (!text1) {
     // Just add some text (speedup).
-    return [new diff.Diff(DIFF_INSERT, text2)];
+    return {type: 'diffs', diffs: [new diff.Diff(DIFF_INSERT, text2)]};
   }
 
   if (!text2) {
     // Just delete some text (speedup).
-    return [new diff.Diff(DIFF_DELETE, text1)];
+    return {type: 'diffs', diffs: [new diff.Diff(DIFF_DELETE, text1)]};
   }
 
   var longtext = text1.length > text2.length ? text1 : text2;
@@ -196,38 +284,38 @@ diff.prototype.diff_compute_ = function(text1, text2, checklines,
     if (text1.length > text2.length) {
       diffs[0][0] = diffs[2][0] = DIFF_DELETE;
     }
-    return diffs;
+    return {type: 'diffs', diffs: diffs};
   }
 
   if (shorttext.length == 1) {
     // Single character string.
     // After the previous speedup, the character can't be an equality.
-    return [new diff.Diff(DIFF_DELETE, text1),
-            new diff.Diff(DIFF_INSERT, text2)];
+    return {type: 'diffs', diffs: [new diff.Diff(DIFF_DELETE, text1),
+        new diff.Diff(DIFF_INSERT, text2)]};
   }
 
   // Check to see if the problem can be split in two.
   var hm = this.diff_halfMatch_(text1, text2);
   if (hm) {
     // A half-match was found, sort out the return data.
-    var text1_a = hm[0];
-    var text1_b = hm[1];
-    var text2_a = hm[2];
-    var text2_b = hm[3];
-    var mid_common = hm[4];
-    // Send both pairs off for separate processing.
-    var diffs_a = this.diff_main(text1_a, text2_a, checklines, deadline);
-    var diffs_b = this.diff_main(text1_b, text2_b, checklines, deadline);
-    // Merge the results.
-    return diffs_a.concat([new diff.Diff(DIFF_EQUAL, mid_common)],
-                          diffs_b);
+    return {type: 'half_match', text1_a: hm[0], text1_b: hm[1],
+            text2_a: hm[2], text2_b: hm[3], mid_common: hm[4],
+            checklines: checklines};
   }
 
   if (checklines && text1.length > 100 && text2.length > 100) {
-    return this.diff_lineMode_(text1, text2, deadline);
+    return {type: 'diffs',
+            diffs: this.diff_lineMode_(text1, text2, deadline)};
   }
 
-  return this.diff_bisect_(text1, text2, deadline);
+  var split = this.diff_bisectFindSplit_(text1, text2, deadline);
+  if (!split) {
+    // Diff took too long and hit the deadline or
+    // number of diffs equals number of characters, no commonality at all.
+    return {type: 'diffs', diffs: [new diff.Diff(DIFF_DELETE, text1),
+        new diff.Diff(DIFF_INSERT, text2)]};
+  }
+  return {type: 'bisect_split', x: split.x, y: split.y};
 };
 
 
@@ -302,16 +390,16 @@ diff.prototype.diff_lineMode_ = function(text1, text2, deadline) {
 
 
 /**
- * Find the 'middle snake' of a diff, split the problem in two
- * and return the recursively constructed diff.
+ * Find the 'middle snake' of a diff and return the split point.
  * See Myers 1986 paper: An O(ND) Difference Algorithm and Its Variations.
  * @param {string} text1 Old string to be diffed.
  * @param {string} text2 New string to be diffed.
  * @param {number} deadline Time at which to bail if not yet complete.
- * @return {!Array.<!diff.Diff>} Array of diff tuples.
+ * @return {{x: number, y: number}|null} Split coordinates, or null if the
+ *     search hit the deadline or found no overlap.
  * @private
  */
-diff.prototype.diff_bisect_ = function(text1, text2, deadline) {
+diff.prototype.diff_bisectFindSplit_ = function(text1, text2, deadline) {
   // Cache the text lengths to prevent multiple calls.
   var text1_length = text1.length;
   var text2_length = text2.length;
@@ -373,7 +461,7 @@ diff.prototype.diff_bisect_ = function(text1, text2, deadline) {
           var x2 = text1_length - v2[k2_offset];
           if (x1 >= x2) {
             // Overlap detected.
-            return this.diff_bisectSplit_(text1, text2, x1, y1, deadline);
+            return {x: x1, y: y1};
           }
         }
       }
@@ -411,16 +499,35 @@ diff.prototype.diff_bisect_ = function(text1, text2, deadline) {
           x2 = text1_length - x2;
           if (x1 >= x2) {
             // Overlap detected.
-            return this.diff_bisectSplit_(text1, text2, x1, y1, deadline);
+            return {x: x1, y: y1};
           }
         }
       }
     }
   }
-  // Diff took too long and hit the deadline or
-  // number of diffs equals number of characters, no commonality at all.
-  return [new diff.Diff(DIFF_DELETE, text1),
-          new diff.Diff(DIFF_INSERT, text2)];
+  return null;
+};
+
+
+/**
+ * Find the 'middle snake' of a diff, split the problem in two
+ * and return the constructed diff.
+ * See Myers 1986 paper: An O(ND) Difference Algorithm and Its Variations.
+ * @param {string} text1 Old string to be diffed.
+ * @param {string} text2 New string to be diffed.
+ * @param {number} deadline Time at which to bail if not yet complete.
+ * @return {!Array.<!diff.Diff>} Array of diff tuples.
+ * @private
+ */
+diff.prototype.diff_bisect_ = function(text1, text2, deadline) {
+  var split = this.diff_bisectFindSplit_(text1, text2, deadline);
+  if (!split) {
+    // Diff took too long and hit the deadline or
+    // number of diffs equals number of characters, no commonality at all.
+    return [new diff.Diff(DIFF_DELETE, text1),
+            new diff.Diff(DIFF_INSERT, text2)];
+  }
+  return this.diff_bisectSplit_(text1, text2, split.x, split.y, deadline);
 };
 
 
@@ -442,9 +549,9 @@ diff.prototype.diff_bisectSplit_ = function(text1, text2, x, y,
   var text1b = text1.substring(x);
   var text2b = text2.substring(y);
 
-  // Compute both diffs serially.
-  var diffs = this.diff_main(text1a, text2a, false, deadline);
-  var diffsb = this.diff_main(text1b, text2b, false, deadline);
+  // Compute both diffs serially without recursive diff_main calls.
+  var diffs = this.diff_mainInternal_(text1a, text2a, false, deadline);
+  var diffsb = this.diff_mainInternal_(text1b, text2b, false, deadline);
 
   return diffs.concat(diffsb);
 };
