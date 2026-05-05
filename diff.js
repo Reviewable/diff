@@ -336,7 +336,7 @@ diff.prototype.diff_lineMode_ = function(text1, text2, deadline) {
   text2 = a.chars2;
   var linearray = a.lineArray;
 
-  var diffs = this.diff_main(text1, text2, false, deadline);
+  var diffs = this.diff_mainInternal_(text1, text2, false, deadline);
 
   // Convert the diff back to original text.
   this.diff_charsToLines_(diffs, linearray);
@@ -369,7 +369,8 @@ diff.prototype.diff_lineMode_ = function(text1, text2, deadline) {
                        count_delete + count_insert);
           pointer = pointer - count_delete - count_insert;
           var subDiff =
-              this.diff_main(text_delete, text_insert, false, deadline);
+              this.diff_mainInternal_(text_delete, text_insert, false,
+                                      deadline);
           for (var j = subDiff.length - 1; j >= 0; j--) {
             diffs.splice(pointer, 0, subDiff[j]);
           }
@@ -585,7 +586,7 @@ diff.prototype.diff_linesToChars_ = function(text1, text2) {
    * @private
    */
   function diff_linesToCharsMunge_(text) {
-    var chars = '';
+    var chars = [];
     // Walk the text, pulling out a substring for each line.
     // text.split('\n') would would temporarily double our memory footprint.
     // Modifying text would create many large strings to garbage collect.
@@ -602,7 +603,7 @@ diff.prototype.diff_linesToChars_ = function(text1, text2) {
 
       if (lineHash.hasOwnProperty ? lineHash.hasOwnProperty(line) :
           (lineHash[line] !== undefined)) {
-        chars += String.fromCharCode(lineHash[line]);
+        chars.push(String.fromCharCode(lineHash[line]));
       } else {
         if (lineArrayLength == maxLines) {
           // Bail out at 65535 because
@@ -610,13 +611,13 @@ diff.prototype.diff_linesToChars_ = function(text1, text2) {
           line = text.substring(lineStart);
           lineEnd = text.length;
         }
-        chars += String.fromCharCode(lineArrayLength);
+        chars.push(String.fromCharCode(lineArrayLength));
         lineHash[line] = lineArrayLength;
         lineArray[lineArrayLength++] = line;
       }
       lineStart = lineEnd + 1;
     }
-    return chars;
+    return chars.join('');
   }
   // Allocate 2/3rds of the space for text1, the rest for text2.
   var maxLines = 40000;
